@@ -3,7 +3,6 @@
 import requests
 import json
 import csv
-import psycopg2
 import os
 import pytz
 from dateutil import parser
@@ -28,14 +27,14 @@ def sensor_api_connection():
         data1 = request1.json()
         
 
-        # add_new_col = {"location": "Janonhanta1, Vantaa, Finland"}
-        # add_new_col_serial = {}
-        # data1.update(add_new_col_serial)
-        # data1.update(add_new_col)
+        add_new_col = {"location": "Janonhanta1, Vantaa, Finland"}
+        add_new_col_serial = {}
+        data1.update(add_new_col_serial)
+        data1.update(add_new_col)
 
-        # api_data_list.append(data1)
+        api_data_list.append(data1)
 
-        print(data1)
+        print(api_data_list)
 
 
 sensor_api_connection()

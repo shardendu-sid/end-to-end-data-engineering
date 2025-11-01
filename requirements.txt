@@ -1,1 +1,8 @@
-# Python dependencies (if not using environment.yml)
+# Python dependencies
+
+flask
+pandas
+request
+scikit-learn
+
+

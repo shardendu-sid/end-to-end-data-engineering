@@ -5,14 +5,17 @@ import csv
 import os
 import pytz
 from dateutil import parser
+import threading
 import time
 import sqlite3
 from azure.iot.device import IoTHubDeviceClient, Message
 from azure.eventhub import EventHubConsumerClient
 
+
 primary_k_string = os.environ.get("primary_key_string")
 event_hub_endpoint = os.environ.get("event_hub_conn_str")
 event_name_of_end_point = os.environ.get("event_name")
+sqllite_database_path = os.environ.get("sql_path")
 
 host = os.environ.get("CONTAINER_IP")
 port = os.environ.get("PORT")
@@ -24,6 +27,8 @@ url = os.environ.get("API_URL")
 
 
 def sensor_api_connection():
+    conn_str = primary_k_string
+    client = IoTHubDeviceClient.create_from_connection_string(conn_str)
     while True:
         api_data_list = {}
 
@@ -40,115 +45,99 @@ def sensor_api_connection():
 
         api_data_list.update(data1)
 
-        conn_str = primary_k_string
-
-        client = IoTHubDeviceClient.create_from_connection_string(conn_str)
-
         msg = Message(json.dumps(api_data_list))
 
         client.send_message(msg)
+        print(f"✅ Sent message to IoT Hub: {api_data_list.get('timestamp', 'no timestamp')}")
+        # print(api_data_list)
+        time.sleep(300)
 
-        conn = sqlite3.connect("/Users/shardendujha/Documents/End-to-End_Data_eng_Project/database/aiq.db")
-        cursor = conn.cursor()
+def listen_to_eventhub():
+    print("Listening for IoT Hub messages...")
 
-        cursor.execute("""
-                       CREATE TABLE IF NOT EXISTS awair_data (
-                       id INTEGER PRIMARY KEY AUTOINCREMENT,
-                       timestamp TEXT,
-                       score REAL,
-                        dew_point REAL,
-                        temp REAL,
-                        humid REAL,
-                        abs_humid REAL,
-                        co2 REAL,
-                        co2_est REAL,
-                        co2_est_baseline REAL,
-                        voc REAL,
-                        voc_baseline REAL,
-                        voc_h2_raw REAL,
-                        voc_ethanol_raw REAL,
-                        pm25 REAL,
-                        pm10_est REAL
-                       )
-                       """)
-        conn.commit()
+    
 
-        eventhub_conn_str = event_hub_endpoint
-        eventhub_name = event_name_of_end_point
-        
-        def on_event(partition_context, event):
-            try:
-                message = json.loads(event.body_as_str())
-                cursor.execute("""
-                    INSERT INTO awair_data (
-                        timestamp, score, dew_point, temp, humid, abs_humid, co2,
-                        co2_est, co2_est_baseline, voc, voc_baseline, voc_h2_raw,
-                        voc_ethanol_raw, pm25, pm10_est
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    message.get("timestamp"),
-                    message.get("score"),
-                    message.get("dew_point"),
-                    message.get("temp"),
-                    message.get("humid"),
-                    message.get("abs_humid"),
-                    message.get("co2"),
-                    message.get("co2_est"),
-                    message.get("co2_est_baseline"),
-                    message.get("voc"),
-                    message.get("voc_baseline"),
-                    message.get("voc_h2_raw"),
-                    message.get("voc_ethanol_raw"),
-                    message.get("pm25"),
-                    message.get("pm10_est")
-                ))
-                conn.commit()
+    conn = sqlite3.connect(sqllite_database_path)
+    cursor = conn.cursor()
 
-                partition_context.update_checkpoint(event)
-                print("Saved message to SQLite:", message.get("timestamp"))
+    cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS awair_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    score REAL,
+                    dew_point REAL,
+                    temp REAL,
+                    humid REAL,
+                    abs_humid REAL,
+                    co2 REAL,
+                    co2_est REAL,
+                    co2_est_baseline REAL,
+                    voc REAL,
+                    voc_baseline REAL,
+                    voc_h2_raw REAL,
+                    voc_ethanol_raw REAL,
+                    pm25 REAL,
+                    pm10_est REAL
+                    )
+                    """)
+    conn.commit()
 
-            except Exception as e:
-                print("Error:", e)
+    eventhub_conn_str = event_hub_endpoint
+    eventhub_name = event_name_of_end_point
 
-        client = EventHubConsumerClient.from_connection_string(
-            conn_str=eventhub_conn_str,
-            consumer_group="$Default",
-            eventhub_name=eventhub_name
+    def on_event(partition_context, event):
+        try:
+            message = json.loads(event.body_as_str())
+            cursor.execute("""
+                INSERT INTO awair_data (
+                    timestamp, score, dew_point, temp, humid, abs_humid, co2,
+                    co2_est, co2_est_baseline, voc, voc_baseline, voc_h2_raw,
+                    voc_ethanol_raw, pm25, pm10_est
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                message.get("timestamp"),
+                message.get("score"),
+                message.get("dew_point"),
+                message.get("temp"),
+                message.get("humid"),
+                message.get("abs_humid"),
+                message.get("co2"),
+                message.get("co2_est"),
+                message.get("co2_est_baseline"),
+                message.get("voc"),
+                message.get("voc_baseline"),
+                message.get("voc_h2_raw"),
+                message.get("voc_ethanol_raw"),
+                message.get("pm25"),
+                message.get("pm10_est")
+            ))
+            conn.commit()
+
+            partition_context.update_checkpoint(event)
+            print("Saved message to SQLite:", message.get("timestamp"))
+
+        except Exception as e:
+            print("Error:", e)
+
+    client = EventHubConsumerClient.from_connection_string(
+        conn_str=eventhub_conn_str,
+        consumer_group="$Default",
+        eventhub_name=eventhub_name
+    )
+
+    with client:
+        # print("Listening for IoT Hub messages...")
+        client.receive(
+            on_event=on_event,
+            starting_position="@latest"  
         )
+if __name__ == "__main__":
+    sender_thread = threading.Thread(target=sensor_api_connection, daemon=True)
+    listener_thread = threading.Thread(target=listen_to_eventhub, daemon=False)
 
-        with client:
-            print("Listening for IoT Hub messages...")
-            client.receive(
-                on_event=on_event,
-                starting_position="@latest"  
-            )
+    sender_thread.start()
+    listener_thread.start()
 
-        print(api_data_list)
-
-
-sensor_api_connection()
-
-# def apenaq_api():
-
-#     API_KEY = "972f1e65eae2c6241edea134055c60a4b3ad9bb7b75a1c2cccf77f835cb29aa0"
-#     url = "https://api.openaq.org/v3/locations/2178"
-
-#     params = {
-#         "country_id": "FI",       # Finland
-#         "city": "Vantaa",         # City name
-#         "limit": 5,
-#         "sort": "desc",
-#         "order_by": "datetime"
-#     }
-
-#     headers = {
-#         "x-api-key": API_KEY
-#     }
-
-#     response = requests.get(url, headers=headers)
-#     data = response.json()
-#     print(data)
-
-
-
-# apenaq_api()
+    sender_thread.join()
+    listener_thread.join()
+    

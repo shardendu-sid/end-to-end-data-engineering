@@ -4,5 +4,11 @@ flask
 pandas
 request
 scikit-learn
+requests
+azure-iot-device
+azure-eventhub
+python-dateutil
+pytz
+
 
 

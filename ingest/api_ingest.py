@@ -56,7 +56,7 @@ def listen_to_eventhub():
     print("Listening for IoT Hub messages...")
 
     
-
+    os.makedirs(os.path.dirname(sqllite_database_path), exist_ok=True)
     conn = sqlite3.connect(sqllite_database_path)
     cursor = conn.cursor()
 

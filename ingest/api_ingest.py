@@ -34,14 +34,20 @@ def sensor_api_connection():
 
         Url = url
         
-        request1 = requests.get(Url)
-        
-        try: 
-            data1 = request1.json()
-        except ValueError:
-            print("Invalid JSON received")
-            return
-    
+        try:
+            request1 = requests.get(Url, timeout=10)  # timeout avoids hanging
+            request1.raise_for_status()  # raises for 4xx/5xx responses
+            try:
+                data1 = request1.json()
+            except json.JSONDecodeError:
+                print("❌ Invalid JSON received:", request1.text)
+                time.sleep(60)  # wait and retry
+                continue
+        except requests.exceptions.RequestException as e:
+            print("❌ Error fetching API:", e)
+            time.sleep(60)  # wait and retry
+            continue
+
         add_new_col = {"location": "Janonhanta1, Vantaa, Finland"}
         add_new_col_serial = {}
         data1.update(add_new_col_serial)
@@ -50,7 +56,6 @@ def sensor_api_connection():
         api_data_list.update(data1)
 
         msg = Message(json.dumps(api_data_list))
-
         client.send_message(msg)
         print(f"✅ Sent message to IoT Hub: {api_data_list.get('timestamp', 'no timestamp')}")
         time.sleep(300)

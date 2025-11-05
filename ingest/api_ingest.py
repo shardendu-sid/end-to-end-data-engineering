@@ -33,11 +33,15 @@ def sensor_api_connection():
         api_data_list = {}
 
         Url = url
-
-        request1 = requests.get(Url)
-        data1 = request1.json()
         
-
+        request1 = requests.get(Url)
+        
+        try: 
+            data1 = request1.json()
+        except ValueError:
+            print("Invalid JSON received")
+            return
+    
         add_new_col = {"location": "Janonhanta1, Vantaa, Finland"}
         add_new_col_serial = {}
         data1.update(add_new_col_serial)
@@ -49,7 +53,6 @@ def sensor_api_connection():
 
         client.send_message(msg)
         print(f"✅ Sent message to IoT Hub: {api_data_list.get('timestamp', 'no timestamp')}")
-        # print(api_data_list)
         time.sleep(300)
 
 def listen_to_eventhub():
@@ -57,7 +60,7 @@ def listen_to_eventhub():
 
     
     os.makedirs(os.path.dirname(sqllite_database_path), exist_ok=True)
-    conn = sqlite3.connect(sqllite_database_path)
+    conn = sqlite3.connect(sqllite_database_path, check_same_thread=False)
     cursor = conn.cursor()
 
     cursor.execute("""

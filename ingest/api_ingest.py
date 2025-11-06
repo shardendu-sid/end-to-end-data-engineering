@@ -153,7 +153,7 @@ app = Flask(__name__)
 
 # Environment variables (set in Azure App Service)
 PRIMARY_KEY_STRING = os.environ.get("primary_key_string")
-API_URL = os.environ.get("API_URL")  # if you have an external sensor API
+API_URL = os.environ.get("API_URL")  # optional: external sensor API
 BLOB_CONN_STRING = os.environ.get("BLOB_CONN_STRING")
 BLOB_CONTAINER = os.environ.get("BLOB_CONTAINER", "sensor-data")
 
@@ -169,20 +169,44 @@ try:
 except Exception:
     pass  # container likely already exists
 
+# Global variable to store the latest sensor data
+latest_sensor_data = {}
+
 # Function to fetch from sensor API and store
 def fetch_and_store_sensor_data():
+    global latest_sensor_data
     while True:
         try:
-            resp = requests.get(API_URL, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+            if API_URL:
+                resp = requests.get(API_URL, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+            else:
+                # Dummy sensor data if no external API
+                data = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "score": 77,
+                    "dew_point": 12.23,
+                    "temp": 23.02,
+                    "humid": 50.65,
+                    "abs_humid": 10.40,
+                    "co2": 805,
+                    "voc": 3389,
+                    "pm25": 2,
+                    "pm10_est": 3
+                }
+
         except Exception as e:
             print(f"[{datetime.utcnow()}] Error fetching API:", e)
             time.sleep(60)
             continue
 
+        # Add extra info
         data.update({"location": "Janonhanta1, Vantaa, Finland"})
         timestamp = data.get("timestamp", datetime.utcnow().isoformat())
+
+        # Save latest data in memory for Flask API
+        latest_sensor_data = data
 
         # Send to IoT Hub
         try:
@@ -206,10 +230,19 @@ def fetch_and_store_sensor_data():
 # Start the fetch loop in a separate thread
 threading.Thread(target=fetch_and_store_sensor_data, daemon=True).start()
 
-# Flask endpoint (optional: you can check API health)
+# Flask endpoint to get the latest sensor data
+@app.route("/air-data/latest", methods=["GET"])
+def get_latest_data():
+    global latest_sensor_data
+    if latest_sensor_data:
+        return jsonify(latest_sensor_data)
+    else:
+        return jsonify({"error": "No data available yet"}), 404
+
+# Health endpoint
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "running"}), 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0")
+    app.run(host="0.0.0.0", port=5000)

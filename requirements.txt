@@ -10,5 +10,7 @@ azure-eventhub
 python-dateutil
 pytz
 azure-storage-blob
+gunicorn
+
 
 

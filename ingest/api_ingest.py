@@ -138,25 +138,29 @@
 #     sender_thread.join()
 #     listener_thread.join()
     
-# cloud_ingest.py
+# cloud_ingest_flask.py
+from flask import Flask, jsonify
 import requests
 import json
 import os
 import time
+import threading
 from azure.iot.device import IoTHubDeviceClient, Message
-from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+from azure.storage.blob import BlobServiceClient
 from datetime import datetime
+
+app = Flask(__name__)
 
 # Environment variables (set in Azure App Service)
 PRIMARY_KEY_STRING = os.environ.get("primary_key_string")
-API_URL = os.environ.get("API_URL")
-BLOB_CONN_STRING = os.environ.get("BLOB_CONN_STRING")  # Azure Storage account connection string
-BLOB_CONTAINER = os.environ.get("BLOB_CONTAINER", "sensor-data")  # default container name
+API_URL = os.environ.get("API_URL")  # if you have an external sensor API
+BLOB_CONN_STRING = os.environ.get("BLOB_CONN_STRING")
+BLOB_CONTAINER = os.environ.get("BLOB_CONTAINER", "sensor-data")
 
 # IoT Hub client
 iot_client = IoTHubDeviceClient.create_from_connection_string(PRIMARY_KEY_STRING)
 
-# Azure Blob Service client
+# Azure Blob client
 blob_service_client = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
 
 # Ensure container exists
@@ -165,10 +169,10 @@ try:
 except Exception:
     pass  # container likely already exists
 
+# Function to fetch from sensor API and store
 def fetch_and_store_sensor_data():
     while True:
         try:
-            # Fetch data from sensor API
             resp = requests.get(API_URL, timeout=10)
             resp.raise_for_status()
             data = resp.json()
@@ -177,23 +181,35 @@ def fetch_and_store_sensor_data():
             time.sleep(60)
             continue
 
-        # Add extra info
         data.update({"location": "Janonhanta1, Vantaa, Finland"})
         timestamp = data.get("timestamp", datetime.utcnow().isoformat())
 
-        # Send data to IoT Hub
-        msg = Message(json.dumps(data))
-        iot_client.send_message(msg)
-        print(f"[{timestamp}] ✅ Sent message to IoT Hub")
+        # Send to IoT Hub
+        try:
+            msg = Message(json.dumps(data))
+            iot_client.send_message(msg)
+            print(f"[{timestamp}] ✅ Sent message to IoT Hub")
+        except Exception as e:
+            print(f"[{timestamp}] ❌ Failed to send to IoT Hub:", e)
 
-        # Store data in Blob Storage
-        blob_name = f"{timestamp.replace(':','-')}.json"
-        blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER, blob=blob_name)
-        blob_client.upload_blob(json.dumps(data), overwrite=True)
-        print(f"[{timestamp}] ✅ Stored message in Blob: {blob_name}")
+        # Store in Blob
+        try:
+            blob_name = f"{timestamp.replace(':','-')}.json"
+            blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER, blob=blob_name)
+            blob_client.upload_blob(json.dumps(data), overwrite=True)
+            print(f"[{timestamp}] ✅ Stored message in Blob: {blob_name}")
+        except Exception as e:
+            print(f"[{timestamp}] ❌ Failed to store in Blob:", e)
 
-        # Wait 5 minutes
-        time.sleep(300)
+        time.sleep(300)  # wait 5 minutes
+
+# Start the fetch loop in a separate thread
+threading.Thread(target=fetch_and_store_sensor_data, daemon=True).start()
+
+# Flask endpoint (optional: you can check API health)
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "running"}), 200
 
 if __name__ == "__main__":
-    fetch_and_store_sensor_data()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

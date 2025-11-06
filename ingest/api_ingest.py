@@ -30,24 +30,50 @@
 # def sensor_api_connection():
 #     conn_str = primary_k_string
 #     client = IoTHubDeviceClient.create_from_connection_string(conn_str)
+    
 #     while True:
 #         try:
-#             resp = requests.get(url, timeout=10)
-#             resp.raise_for_status()
-#             data = resp.json()
+#             List2 = []
+
+#             Url = url  # api url path
+#             request1 = requests.get(Url, timeout=30)
+#             data1 = request1.json()
+
+#             # Parse the timestamp using dateutil.parser
+#             utc_timestamp = parser.parse(data1["timestamp"])
+
+#             # Convert to Helsinki time
+#             helsinki_timezone = pytz.timezone("Europe/Helsinki")
+#             helsinki_timestamp = utc_timestamp.astimezone(helsinki_timezone)
+
+#             # Format the timestamp to display only date and time
+#             data1["timestamp"] = helsinki_timestamp.strftime("%Y-%m-%d %H-%M-%S")  # Use - instead of : for Blob
+
+#             # Add location and other columns
+#             add_new_col = {"location": "Janonhanta1,Vantaa,Finland"}
+#             add_bew_col_serial = {}
+#             data1.update(add_bew_col_serial)
+#             data1.update(add_new_col)
+
+#             List2.append(data1)
+
+#             # Send to IoT Hub
+#             msg = Message(json.dumps(data1))
+#             client.send_message(msg)
+#             print(f"✅ Sent message: {data1.get('timestamp')}")
+#             print(List2)
+
+#             # Safe Blob storage
+#             blob_name = re.sub(r'[^a-z0-9\-]', '-', data1["timestamp"].lower()) + ".json"
+#             blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER, blob=blob_name)
+#             blob_client.upload_blob(json.dumps(data1), overwrite=True)
+#             print(f"✅ Stored in Blob: {blob_name}")
+
 #         except Exception as e:
-#             print("Error fetching API:", e)
-#             time.sleep(60)
-#             continue
+#             print(f"[{datetime.utcnow().isoformat()}] ❌ Error: {e}")
 
-#         # Add extra info
-#         data.update({"location": "Janonhanta1, Vantaa, Finland"})
+#         time.sleep(300)  # every 5 minutes
 
-#         # Send to IoT Hub
-#         msg = Message(json.dumps(data))
-#         client.send_message(msg)
-#         print(f"✅ Sent message: {data.get('timestamp')}")
-#         time.sleep(300)
 
 # def listen_to_eventhub():
 #     print("Listening for IoT Hub messages...")
@@ -140,78 +166,116 @@
     
 # cloud_ingest_flask.py
 from flask import Flask, jsonify
-import json, os, time, threading, random
+import json, os, time, threading, random, re
 from azure.iot.device import IoTHubDeviceClient, Message
 from azure.storage.blob import BlobServiceClient
 from datetime import datetime
+from dateutil import parser
+import pytz
+import requests
 
 app = Flask(__name__)
 
-# Environment variables (set in Azure App Service)
-PRIMARY_KEY_STRING = os.environ.get("primary_key_string")
+# =========================
+# Environment variables
+# =========================
+PRIMARY_KEY_STRING = os.environ.get("primary_key_string")  # IoT Hub device key
 API_URL = os.environ.get("API_URL")  # optional: external sensor API
 BLOB_CONN_STRING = os.environ.get("BLOB_CONN_STRING")
 BLOB_CONTAINER = os.environ.get("BLOB_CONTAINER", "sensor-data")
+url = API_URL  # keep your variable naming
 
+# =========================
 # Initialize Azure clients
+# =========================
 iot_client = IoTHubDeviceClient.create_from_connection_string(PRIMARY_KEY_STRING)
 blob_service_client = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
 try:
     blob_service_client.create_container(BLOB_CONTAINER)
 except Exception:
-    pass  # already exists
+    pass  # container likely exists
 
+# =========================
+# Global latest data for Flask endpoint
+# =========================
 latest_data = {}
 
-def fetch_and_store_sensor_data():
-    global latest_data
+# =========================
+# Helper to sanitize blob names
+# =========================
+def sanitize_blob_name(s):
+    """
+    Convert string to valid Azure blob name:
+    lowercase letters, numbers, dash, underscore
+    """
+    s = s.lower()
+    s = re.sub(r'[^a-z0-9\-]', '-', s)
+    s = re.sub(r'-+', '-', s)
+    return s.strip('-') + ".json"
+
+
+# =========================
+# Sensor ingestion function
+# =========================
+def sensor_api_connection():
+    conn_str = PRIMARY_KEY_STRING
+    client = IoTHubDeviceClient.create_from_connection_string(conn_str)
     while True:
         try:
-            # Generate dummy data if no external API
-            if API_URL:
-                import requests
-                resp = requests.get(API_URL, timeout=10)
-                resp.raise_for_status()
-                data = resp.json()
-            else:
-                data = {
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "score": random.randint(50, 100),
-                    "dew_point": round(random.uniform(10, 15), 2),
-                    "temp": round(random.uniform(20, 25), 2),
-                    "humid": round(random.uniform(40, 60), 2),
-                    "abs_humid": round(random.uniform(10, 12), 2),
-                    "co2": random.randint(400, 1000),
-                    "voc": random.randint(3000, 4000),
-                    "pm25": random.randint(1, 5),
-                    "pm10_est": random.randint(1, 5)
-                }
+            List2 = []
 
-            data.update({"location": "Janonhanta1, Vantaa, Finland"})
-            timestamp = data.get("timestamp", datetime.utcnow().isoformat())
+            Url = url  # API URL path
+
+            request1 = requests.get(Url, timeout=30)
+            data1 = request1.json()
+
+            # Parse timestamp from sensor
+            utc_timestamp = parser.parse(data1["timestamp"])
+
+            # Convert to Helsinki timezone
+            helsinki_timezone = pytz.timezone("Europe/Helsinki")
+            helsinki_timestamp = utc_timestamp.astimezone(helsinki_timezone)
+
+            # Format timestamp safely for blob
+            safe_ts = helsinki_timestamp.strftime("%Y-%m-%d-%H-%M-%S")
+            data1["timestamp"] = safe_ts
+
+            # Add extra info
+            data1.update({"location": "Janonhanta1,Vantaa,Finland"})
+
+            List2.append(data1)
 
             # Send to IoT Hub
-            msg = Message(json.dumps(data))
-            iot_client.send_message(msg)
-            print(f"[{timestamp}] ✅ Sent to IoT Hub")
+            msg = Message(json.dumps(data1))
+            client.send_message(msg)
+            print(f"✅ Sent message: {data1.get('timestamp')}")
+            print(List2)
 
-            # Store in Blob
-            blob_name = f"{timestamp.replace(':', '-')}.json"
-            blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER, blob=blob_name)
-            blob_client.upload_blob(json.dumps(data), overwrite=True)
-            print(f"[{timestamp}] ✅ Stored in Blob: {blob_name}")
+            # Store in Azure Blob
+            blob_name = f"{safe_ts}.json"  # only timestamp in blob name
+            blob_client = blob_service_client.get_blob_client(
+                container=BLOB_CONTAINER, blob=blob_name
+            )
+            blob_client.upload_blob(json.dumps(data1), overwrite=True)
+            print(f"✅ Stored in Blob: {blob_name}")
 
-            # Save locally for endpoint
-            latest_data = data
+            time.sleep(300)  # every 5 minutes
 
         except Exception as e:
-            print(f"[{datetime.utcnow()}] ❌ Error: {e}")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Error: {e}")
 
         time.sleep(300)  # every 5 minutes
 
-# Run background thread
-threading.Thread(target=fetch_and_store_sensor_data, daemon=True).start()
 
+# =========================
+# Start ingestion in background thread
+# =========================
+threading.Thread(target=sensor_api_connection, daemon=True).start()
+
+
+# =========================
+# Flask endpoints
+# =========================
 @app.route("/air-data/latest", methods=["GET"])
 def air_data_latest():
     if latest_data:
@@ -222,7 +286,10 @@ def air_data_latest():
 def health():
     return jsonify({"status": "running"}), 200
 
-# DO NOT hardcode port here — Azure handles it automatically
+
+# =========================
+# Main entry
+# =========================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8081))
     app.run(host="0.0.0.0", port=port)

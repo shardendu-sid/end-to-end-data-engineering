@@ -166,10 +166,13 @@
     
 # cloud_ingest_flask.py
 from flask import Flask, jsonify
-import json, os, time, threading, random, re
+import os
+import re 
+import json
+import time
+import threading
 from azure.iot.device import IoTHubDeviceClient, Message
 from azure.storage.blob import BlobServiceClient
-from datetime import datetime
 from dateutil import parser
 import pytz
 import requests
@@ -249,7 +252,7 @@ def sensor_api_connection():
             msg = Message(json.dumps(data1))
             client.send_message(msg)
             print(f"✅ Sent message: {data1.get('timestamp')}")
-            print(List2)
+            
 
             # Store in Azure Blob
             blob_name = f"{safe_ts}.json"  # only timestamp in blob name

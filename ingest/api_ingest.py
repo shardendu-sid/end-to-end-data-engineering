@@ -140,14 +140,10 @@
     
 # cloud_ingest_flask.py
 from flask import Flask, jsonify
-import json
-import os
-import time
-import threading
+import json, os, time, threading, random
 from azure.iot.device import IoTHubDeviceClient, Message
 from azure.storage.blob import BlobServiceClient
 from datetime import datetime
-import random
 
 app = Flask(__name__)
 
@@ -157,33 +153,27 @@ API_URL = os.environ.get("API_URL")  # optional: external sensor API
 BLOB_CONN_STRING = os.environ.get("BLOB_CONN_STRING")
 BLOB_CONTAINER = os.environ.get("BLOB_CONTAINER", "sensor-data")
 
-# IoT Hub client
+# Initialize Azure clients
 iot_client = IoTHubDeviceClient.create_from_connection_string(PRIMARY_KEY_STRING)
-
-# Azure Blob client
 blob_service_client = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
-
-# Ensure container exists
 try:
     blob_service_client.create_container(BLOB_CONTAINER)
 except Exception:
-    pass  # container likely already exists
+    pass  # already exists
 
-# Store latest data in memory for Flask endpoint
 latest_data = {}
 
-# Function to fetch from sensor API or generate dummy data
 def fetch_and_store_sensor_data():
     global latest_data
     while True:
         try:
+            # Generate dummy data if no external API
             if API_URL:
                 import requests
                 resp = requests.get(API_URL, timeout=10)
                 resp.raise_for_status()
                 data = resp.json()
             else:
-                # Dummy sensor data
                 data = {
                     "timestamp": datetime.utcnow().isoformat(),
                     "score": random.randint(50, 100),
@@ -201,46 +191,37 @@ def fetch_and_store_sensor_data():
             timestamp = data.get("timestamp", datetime.utcnow().isoformat())
 
             # Send to IoT Hub
-            try:
-                msg = Message(json.dumps(data))
-                iot_client.send_message(msg)
-                print(f"[{timestamp}] ✅ Sent message to IoT Hub")
-            except Exception as e:
-                print(f"[{timestamp}] ❌ Failed to send to IoT Hub:", e)
+            msg = Message(json.dumps(data))
+            iot_client.send_message(msg)
+            print(f"[{timestamp}] ✅ Sent to IoT Hub")
 
             # Store in Blob
-            try:
-                blob_name = f"{timestamp.replace(':','-')}.json"
-                blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER, blob=blob_name)
-                blob_client.upload_blob(json.dumps(data), overwrite=True)
-                print(f"[{timestamp}] ✅ Stored message in Blob: {blob_name}")
-            except Exception as e:
-                print(f"[{timestamp}] ❌ Failed to store in Blob:", e)
+            blob_name = f"{timestamp.replace(':', '-')}.json"
+            blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER, blob=blob_name)
+            blob_client.upload_blob(json.dumps(data), overwrite=True)
+            print(f"[{timestamp}] ✅ Stored in Blob: {blob_name}")
 
-            # Update latest_data for Flask endpoint
+            # Save locally for endpoint
             latest_data = data
 
         except Exception as e:
-            print(f"[{datetime.utcnow()}] ❌ Error fetching or processing data:", e)
+            print(f"[{datetime.utcnow()}] ❌ Error: {e}")
 
-        time.sleep(300)  # 5 minutes
+        time.sleep(300)  # every 5 minutes
 
-# Start the fetch loop in a separate thread
+# Run background thread
 threading.Thread(target=fetch_and_store_sensor_data, daemon=True).start()
 
-# Flask endpoint to check latest sensor data
 @app.route("/air-data/latest", methods=["GET"])
 def air_data_latest():
     if latest_data:
-        return jsonify(latest_data), 200
-    else:
-        return jsonify({"message": "No data available yet"}), 503
+        return jsonify(latest_data)
+    return jsonify({"message": "No data yet"}), 503
 
-# Health endpoint
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "running"}), 200
 
+# DO NOT hardcode port here — Azure handles it automatically
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8081))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))

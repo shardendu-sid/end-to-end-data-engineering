@@ -140,7 +140,6 @@
     
 # cloud_ingest_flask.py
 from flask import Flask, jsonify
-import requests
 import json
 import os
 import time
@@ -148,6 +147,7 @@ import threading
 from azure.iot.device import IoTHubDeviceClient, Message
 from azure.storage.blob import BlobServiceClient
 from datetime import datetime
+import random
 
 app = Flask(__name__)
 
@@ -169,75 +169,72 @@ try:
 except Exception:
     pass  # container likely already exists
 
-# Global variable to store the latest sensor data
-latest_sensor_data = {}
+# Store latest data in memory for Flask endpoint
+latest_data = {}
 
-# Function to fetch from sensor API and store
+# Function to fetch from sensor API or generate dummy data
 def fetch_and_store_sensor_data():
-    global latest_sensor_data
+    global latest_data
     while True:
         try:
             if API_URL:
+                import requests
                 resp = requests.get(API_URL, timeout=10)
                 resp.raise_for_status()
                 data = resp.json()
             else:
-                # Dummy sensor data if no external API
+                # Dummy sensor data
                 data = {
                     "timestamp": datetime.utcnow().isoformat(),
-                    "score": 77,
-                    "dew_point": 12.23,
-                    "temp": 23.02,
-                    "humid": 50.65,
-                    "abs_humid": 10.40,
-                    "co2": 805,
-                    "voc": 3389,
-                    "pm25": 2,
-                    "pm10_est": 3
+                    "score": random.randint(50, 100),
+                    "dew_point": round(random.uniform(10, 15), 2),
+                    "temp": round(random.uniform(20, 25), 2),
+                    "humid": round(random.uniform(40, 60), 2),
+                    "abs_humid": round(random.uniform(10, 12), 2),
+                    "co2": random.randint(400, 1000),
+                    "voc": random.randint(3000, 4000),
+                    "pm25": random.randint(1, 5),
+                    "pm10_est": random.randint(1, 5)
                 }
 
+            data.update({"location": "Janonhanta1, Vantaa, Finland"})
+            timestamp = data.get("timestamp", datetime.utcnow().isoformat())
+
+            # Send to IoT Hub
+            try:
+                msg = Message(json.dumps(data))
+                iot_client.send_message(msg)
+                print(f"[{timestamp}] ✅ Sent message to IoT Hub")
+            except Exception as e:
+                print(f"[{timestamp}] ❌ Failed to send to IoT Hub:", e)
+
+            # Store in Blob
+            try:
+                blob_name = f"{timestamp.replace(':','-')}.json"
+                blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER, blob=blob_name)
+                blob_client.upload_blob(json.dumps(data), overwrite=True)
+                print(f"[{timestamp}] ✅ Stored message in Blob: {blob_name}")
+            except Exception as e:
+                print(f"[{timestamp}] ❌ Failed to store in Blob:", e)
+
+            # Update latest_data for Flask endpoint
+            latest_data = data
+
         except Exception as e:
-            print(f"[{datetime.utcnow()}] Error fetching API:", e)
-            time.sleep(60)
-            continue
+            print(f"[{datetime.utcnow()}] ❌ Error fetching or processing data:", e)
 
-        # Add extra info
-        data.update({"location": "Janonhanta1, Vantaa, Finland"})
-        timestamp = data.get("timestamp", datetime.utcnow().isoformat())
-
-        # Save latest data in memory for Flask API
-        latest_sensor_data = data
-
-        # Send to IoT Hub
-        try:
-            msg = Message(json.dumps(data))
-            iot_client.send_message(msg)
-            print(f"[{timestamp}] ✅ Sent message to IoT Hub")
-        except Exception as e:
-            print(f"[{timestamp}] ❌ Failed to send to IoT Hub:", e)
-
-        # Store in Blob
-        try:
-            blob_name = f"{timestamp.replace(':','-')}.json"
-            blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER, blob=blob_name)
-            blob_client.upload_blob(json.dumps(data), overwrite=True)
-            print(f"[{timestamp}] ✅ Stored message in Blob: {blob_name}")
-        except Exception as e:
-            print(f"[{timestamp}] ❌ Failed to store in Blob:", e)
-
-        time.sleep(300)  # wait 5 minutes
+        time.sleep(300)  # 5 minutes
 
 # Start the fetch loop in a separate thread
 threading.Thread(target=fetch_and_store_sensor_data, daemon=True).start()
 
-# Flask endpoint to get the latest sensor data
+# Flask endpoint to check latest sensor data
 @app.route("/air-data/latest", methods=["GET"])
-def get_latest_data():
-    global latest_sensor_data
-    if latest_sensor_data:
-        return jsonify(latest_sensor_data)
+def air_data_latest():
+    if latest_data:
+        return jsonify(latest_data), 200
     else:
-        return jsonify({"error": "No data available yet"}), 404
+        return jsonify({"message": "No data available yet"}), 503
 
 # Health endpoint
 @app.route("/health", methods=["GET"])
@@ -245,4 +242,5 @@ def health():
     return jsonify({"status": "running"}), 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)

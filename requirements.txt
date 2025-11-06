@@ -9,6 +9,6 @@ azure-iot-device
 azure-eventhub
 python-dateutil
 pytz
-
+azure-storage-blob
 
 

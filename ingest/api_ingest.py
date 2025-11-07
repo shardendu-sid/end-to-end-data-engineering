@@ -232,6 +232,10 @@ def sensor_api_connection():
             request1 = requests.get(Url, timeout=30)
             data1 = request1.json()
 
+            # Update latest_data for Flask endpoint
+            global latest_data
+            latest_data = data1
+
             # Parse timestamp from sensor
             utc_timestamp = parser.parse(data1["timestamp"])
 
@@ -262,7 +266,7 @@ def sensor_api_connection():
             blob_client.upload_blob(json.dumps(data1), overwrite=True)
             print(f"✅ Stored in Blob: {blob_name}")
 
-            time.sleep(300)  # every 5 minutes
+            
 
         except Exception as e:
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Error: {e}")
@@ -296,3 +300,6 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
+  
+    
+

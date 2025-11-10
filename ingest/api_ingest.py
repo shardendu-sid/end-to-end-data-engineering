@@ -371,17 +371,19 @@ def sensor_api_connection():
             response = requests.get(Url, timeout=30)
             # data1 = response.json()
             # check status and ensure JSON
+            # Skip this cycle if the response is not 200
             if response.status_code != 200:
                 logger.error(f"❌ Bad status code {response.status_code}: {response.text[:200]}")
                 time.sleep(60)
-                return  # skip this cycle and retry later
+                continue  # retry in the next loop instead of return
 
+            # Parse JSON safely
             try:
                 data1 = response.json()
-            except Exception as e:
-                logger.error(f"❌ Failed to parse JSON: {e} | Response: {response.text[:200]}")
+            except json.JSONDecodeError:
+                logger.error(f"❌ Failed to parse JSON: Response is empty or invalid: {response.text[:200]}")
                 time.sleep(60)
-                return
+                continue
 
             # Update latest_data for Flask endpoint
             global latest_data

@@ -364,16 +364,19 @@ def sensor_api_connection():
     conn_str = PRIMARY_KEY_STRING
     client = IoTHubDeviceClient.create_from_connection_string(conn_str)
     logger.info("🟢 Sensor ingestion thread started")
-    
+
     while True:
         try:
             Url = url
             response = requests.get(Url, timeout=30)
+
+            # Check for HTTP errors
             if response.status_code != 200:
                 logger.error(f"❌ Bad status code {response.status_code}: {response.text[:200]}")
                 time.sleep(60)
                 continue
 
+            # Try parsing JSON safely
             try:
                 data1 = response.json()
             except json.JSONDecodeError:
@@ -381,37 +384,43 @@ def sensor_api_connection():
                 time.sleep(60)
                 continue
 
-            # Check timestamp
+            # Validate timestamp
             timestamp_str = data1.get("timestamp")
             if not timestamp_str:
                 logger.error(f"❌ Missing timestamp in data: {data1}")
                 time.sleep(60)
                 continue
 
-            # Update latest_data for Flask endpoint
+            # Update global latest data for Flask endpoint
             global latest_data
             latest_data = data1
 
+            # Convert timestamp to Helsinki time
             utc_timestamp = parser.parse(timestamp_str)
             helsinki_timestamp = utc_timestamp.astimezone(pytz.timezone("Europe/Helsinki"))
             safe_ts = helsinki_timestamp.strftime("%Y-%m-%d-%H-%M-%S")
             data1["timestamp"] = safe_ts
+
+            # Add location info
             data1.update({"location": "Janonhanta1,Vantaa,Finland"})
 
-            # Send to IoT Hub
+            # Send message to Azure IoT Hub
             msg = Message(json.dumps(data1))
             client.send_message(msg)
             logger.info(f"✅ Sent message: {data1.get('timestamp')}")
 
-            # Store in Azure Blob
+            # Store in Azure Blob Storage
             blob_name = f"{safe_ts}.json"
-            blob_client = blob_service_client.get_blob_client(container=BLOB_CONTAINER, blob=blob_name)
+            blob_client = blob_service_client.get_blob_client(
+                container=BLOB_CONTAINER, blob=blob_name
+            )
             blob_client.upload_blob(json.dumps(data1), overwrite=True)
             logger.info(f"✅ Stored in Blob: {blob_name}")
 
         except Exception as e:
             logger.error(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Error: {e}")
 
+        # Wait 5 minutes before next cycle
         time.sleep(300)
 
 # =========================

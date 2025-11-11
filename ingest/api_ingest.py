@@ -302,7 +302,152 @@
 #     app.run(host="0.0.0.0", port=port)
   
     
-# cloud_ingest_flask.py
+# # cloud_ingest_flask.py
+# from flask import Flask, jsonify
+# import os
+# import re 
+# import json
+# import time
+# import threading
+# import logging
+# from azure.iot.device import IoTHubDeviceClient, Message
+# from azure.storage.blob import BlobServiceClient
+# from dateutil import parser
+# import pytz
+# import requests
+
+# app = Flask(__name__)
+
+# # =========================
+# # Logging setup
+# # =========================
+# logging.basicConfig(level=logging.INFO)
+# logger = logging.getLogger(__name__)
+
+# # =========================
+# # Environment variables
+# # =========================
+# PRIMARY_KEY_STRING = os.environ.get("primary_key_string")  # IoT Hub device key
+# API_URL = os.environ.get("API_URL")  # optional: external sensor API
+# BLOB_CONN_STRING = os.environ.get("BLOB_CONN_STRING")
+# BLOB_CONTAINER = os.environ.get("BLOB_CONTAINER", "sensor-data")
+# url = API_URL  # keep your variable naming
+
+# # =========================
+# # Initialize Azure clients
+# # =========================
+# iot_client = IoTHubDeviceClient.create_from_connection_string(PRIMARY_KEY_STRING)
+# blob_service_client = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
+# try:
+#     blob_service_client.create_container(BLOB_CONTAINER)
+# except Exception:
+#     pass  # container likely exists
+
+# # =========================
+# # Global latest data for Flask endpoint
+# # =========================
+# latest_data = {}
+
+# # =========================
+# # Helper to sanitize blob names
+# # =========================
+# def sanitize_blob_name(s):
+#     s = s.lower()
+#     s = re.sub(r'[^a-z0-9\-]', '-', s)
+#     s = re.sub(r'-+', '-', s)
+#     return s.strip('-') + ".json"
+
+# # =========================
+# # Sensor ingestion function
+# # =========================
+# def sensor_api_connection():
+#     conn_str = PRIMARY_KEY_STRING
+#     client = IoTHubDeviceClient.create_from_connection_string(conn_str)
+#     logger.info("🟢 Sensor ingestion thread started")
+
+#     while True:
+#         try:
+#             Url = url
+#             response = requests.get(Url, timeout=30)
+
+#             # Check for HTTP errors
+#             if response.status_code != 200:
+#                 logger.error(f"❌ Bad status code {response.status_code}: {response.text[:200]}")
+#                 time.sleep(60)
+#                 continue
+
+#             # Try parsing JSON safely
+#             try:
+#                 data1 = response.json()
+#             except json.JSONDecodeError:
+#                 logger.error(f"❌ Failed to parse JSON: {response.text[:200]}")
+#                 time.sleep(60)
+#                 continue
+
+#             # Validate timestamp
+#             timestamp_str = data1.get("timestamp")
+#             if not timestamp_str:
+#                 logger.error(f"❌ Missing timestamp in data: {data1}")
+#                 time.sleep(60)
+#                 continue
+
+#             # Update global latest data for Flask endpoint
+#             global latest_data
+#             latest_data = data1
+
+#             # Convert timestamp to Helsinki time
+#             utc_timestamp = parser.parse(timestamp_str)
+#             helsinki_timestamp = utc_timestamp.astimezone(pytz.timezone("Europe/Helsinki"))
+#             safe_ts = helsinki_timestamp.strftime("%Y-%m-%d-%H-%M-%S")
+#             data1["timestamp"] = safe_ts
+
+#             # Add location info
+#             data1.update({"location": "Janonhanta1,Vantaa,Finland"})
+
+#             # Send message to Azure IoT Hub
+#             msg = Message(json.dumps(data1))
+#             client.send_message(msg)
+#             logger.info(f"✅ Sent message: {data1.get('timestamp')}")
+
+#             # Store in Azure Blob Storage
+#             blob_name = f"{safe_ts}.json"
+#             blob_client = blob_service_client.get_blob_client(
+#                 container=BLOB_CONTAINER, blob=blob_name
+#             )
+#             blob_client.upload_blob(json.dumps(data1), overwrite=True)
+#             logger.info(f"✅ Stored in Blob: {blob_name}")
+
+#         except Exception as e:
+#             logger.error(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Error: {e}")
+
+#         # Wait 5 minutes before next cycle
+#         time.sleep(300)
+
+# # =========================
+# # Start ingestion in background thread
+# # =========================
+# threading.Thread(target=sensor_api_connection, daemon=True).start()
+
+# # =========================
+# # Flask endpoints
+# # =========================
+# @app.route("/air-data/latest", methods=["GET"])
+# def air_data_latest():
+#     if latest_data:
+#         return jsonify(latest_data)
+#     return jsonify({"message": "No data yet"}), 503
+
+# @app.route("/health", methods=["GET"])
+# def health():
+#     return jsonify({"status": "running"}), 200
+
+# # =========================
+# # Main entry
+# # =========================
+# if __name__ == "__main__":
+#     port = int(os.environ.get("PORT", 8080))
+#     app.run(host="0.0.0.0", port=port)
+
 from flask import Flask, jsonify
 import os
 import re 
@@ -327,21 +472,33 @@ logger = logging.getLogger(__name__)
 # =========================
 # Environment variables
 # =========================
-PRIMARY_KEY_STRING = os.environ.get("primary_key_string")  # IoT Hub device key
-API_URL = os.environ.get("API_URL")  # optional: external sensor API
+PRIMARY_KEY_STRING = os.environ.get("primary_key_string")
+API_URL = os.environ.get("API_URL")
 BLOB_CONN_STRING = os.environ.get("BLOB_CONN_STRING")
 BLOB_CONTAINER = os.environ.get("BLOB_CONTAINER", "sensor-data")
-url = API_URL  # keep your variable naming
+# Removed 'url = API_URL' here to use API_URL directly where needed
 
 # =========================
-# Initialize Azure clients
+# Initialize Azure clients (moved inside the function to ensure they are available)
+# These were causing issues if env vars weren't set on import time in the cloud
 # =========================
-iot_client = IoTHubDeviceClient.create_from_connection_string(PRIMARY_KEY_STRING)
-blob_service_client = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
+iot_client = None
+blob_service_client = None
 try:
-    blob_service_client.create_container(BLOB_CONTAINER)
-except Exception:
-    pass  # container likely exists
+    if PRIMARY_KEY_STRING:
+        iot_client = IoTHubDeviceClient.create_from_connection_string(PRIMARY_KEY_STRING)
+    if BLOB_CONN_STRING:
+        blob_service_client = BlobServiceClient.from_connection_string(BLOB_CONN_STRING)
+        try:
+            # Check if container exists first to avoid 409 error
+            if not blob_service_client.get_container_client(BLOB_CONTAINER).exists():
+                blob_service_client.create_container(BLOB_CONTAINER)
+        except Exception as e:
+            logger.warning(f"Could not check or create container (might already exist or permission issue): {e}")
+
+except Exception as e:
+    logger.error(f"Failed to initialize Azure clients: {e}")
+
 
 # =========================
 # Global latest data for Flask endpoint
@@ -349,7 +506,7 @@ except Exception:
 latest_data = {}
 
 # =========================
-# Helper to sanitize blob names
+# Helper to sanitize blob names (not strictly needed by the error logs but fine to keep)
 # =========================
 def sanitize_blob_name(s):
     s = s.lower()
@@ -361,22 +518,30 @@ def sanitize_blob_name(s):
 # Sensor ingestion function
 # =========================
 def sensor_api_connection():
-    conn_str = PRIMARY_KEY_STRING
-    client = IoTHubDeviceClient.create_from_connection_string(conn_str)
+    if not API_URL:
+        logger.error("❌ API_URL environment variable is not set. Cannot fetch data.")
+        return
+
+    # Use the global clients initialized above
+    client = iot_client 
+    bs_client = blob_service_client
+    
+    if not client or not bs_client:
+        logger.error("❌ Azure clients not initialized properly. Cannot send data.")
+        return
+
     logger.info("🟢 Sensor ingestion thread started")
 
     while True:
         try:
-            Url = url
-            response = requests.get(Url, timeout=30)
+            # Use the environment variable directly
+            response = requests.get(API_URL, timeout=30)
 
-            # Check for HTTP errors
             if response.status_code != 200:
                 logger.error(f"❌ Bad status code {response.status_code}: {response.text[:200]}")
                 time.sleep(60)
                 continue
 
-            # Try parsing JSON safely
             try:
                 data1 = response.json()
             except json.JSONDecodeError:
@@ -384,43 +549,39 @@ def sensor_api_connection():
                 time.sleep(60)
                 continue
 
-            # Validate timestamp
             timestamp_str = data1.get("timestamp")
             if not timestamp_str:
                 logger.error(f"❌ Missing timestamp in data: {data1}")
                 time.sleep(60)
                 continue
 
-            # Update global latest data for Flask endpoint
             global latest_data
-            latest_data = data1
+            latest_data = data1 # Update global data
 
-            # Convert timestamp to Helsinki time
             utc_timestamp = parser.parse(timestamp_str)
             helsinki_timestamp = utc_timestamp.astimezone(pytz.timezone("Europe/Helsinki"))
             safe_ts = helsinki_timestamp.strftime("%Y-%m-%d-%H-%M-%S")
             data1["timestamp"] = safe_ts
-
-            # Add location info
             data1.update({"location": "Janonhanta1,Vantaa,Finland"})
 
-            # Send message to Azure IoT Hub
             msg = Message(json.dumps(data1))
             client.send_message(msg)
-            logger.info(f"✅ Sent message: {data1.get('timestamp')}")
+            logger.info(f"✅ Sent message to IoT Hub: {data1.get('timestamp')}")
 
-            # Store in Azure Blob Storage
             blob_name = f"{safe_ts}.json"
-            blob_client = blob_service_client.get_blob_client(
+            blob_client = bs_client.get_blob_client(
                 container=BLOB_CONTAINER, blob=blob_name
             )
             blob_client.upload_blob(json.dumps(data1), overwrite=True)
             logger.info(f"✅ Stored in Blob: {blob_name}")
 
+        except requests.exceptions.ConnectionError:
+            # This is the expected error if the API_URL points to a local network address
+            logger.error(f"❌ Connection Error: Cannot reach the sensor API at {API_URL}. Is it a local IP address?")
+            logger.info("Ensure API_URL is a publicly accessible endpoint, or implement an edge solution.")
         except Exception as e:
             logger.error(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Error: {e}")
 
-        # Wait 5 minutes before next cycle
         time.sleep(300)
 
 # =========================
@@ -433,18 +594,28 @@ threading.Thread(target=sensor_api_connection, daemon=True).start()
 # =========================
 @app.route("/air-data/latest", methods=["GET"])
 def air_data_latest():
+    # Use a lock if you are strictly paranoid about thread safety for this single dict update,
+    # but for simple GET requests it's generally okay in Python.
     if latest_data:
         return jsonify(latest_data)
-    return jsonify({"message": "No data yet"}), 503
+    # The 503 error in your logs came from this line
+    return jsonify({"message": "No data yet. Data ingestion thread might be starting up or failing."}), 503
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "running"}), 200
+    # Health check should be separate from data endpoint check
+    if iot_client and blob_service_client:
+         return jsonify({"status": "running", "azure_clients_initialized": True}), 200
+    return jsonify({"status": "running", "azure_clients_initialized": False, "message": "Check logs for client initialization errors"}), 500
+
 
 # =========================
 # Main entry
 # =========================
 if __name__ == "__main__":
+    # Azure App Service sets the PORT environment variable dynamically.
+    # We must use it. Gunicorn will also use this when running in the cloud.
     port = int(os.environ.get("PORT", 8080))
+    # When running locally via `python cloud_ingest_flask.py`, this runs.
+    # When deployed to App Service (Linux), Gunicorn runs the app.
     app.run(host="0.0.0.0", port=port)
-

@@ -369,19 +369,22 @@ def sensor_api_connection():
         try:
             Url = url
             response = requests.get(Url, timeout=30)
-            # data1 = response.json()
-            # check status and ensure JSON
-            # Skip this cycle if the response is not 200
             if response.status_code != 200:
                 logger.error(f"❌ Bad status code {response.status_code}: {response.text[:200]}")
                 time.sleep(60)
-                continue  # retry in the next loop instead of return
+                continue
 
-            # Parse JSON safely
             try:
                 data1 = response.json()
             except json.JSONDecodeError:
-                logger.error(f"❌ Failed to parse JSON: Response is empty or invalid: {response.text[:200]}")
+                logger.error(f"❌ Failed to parse JSON: {response.text[:200]}")
+                time.sleep(60)
+                continue
+
+            # Check timestamp
+            timestamp_str = data1.get("timestamp")
+            if not timestamp_str:
+                logger.error(f"❌ Missing timestamp in data: {data1}")
                 time.sleep(60)
                 continue
 
@@ -389,14 +392,10 @@ def sensor_api_connection():
             global latest_data
             latest_data = data1
 
-            # Parse timestamp from sensor
-            utc_timestamp = parser.parse(data1["timestamp"])
-            helsinki_timezone = pytz.timezone("Europe/Helsinki")
-            helsinki_timestamp = utc_timestamp.astimezone(helsinki_timezone)
+            utc_timestamp = parser.parse(timestamp_str)
+            helsinki_timestamp = utc_timestamp.astimezone(pytz.timezone("Europe/Helsinki"))
             safe_ts = helsinki_timestamp.strftime("%Y-%m-%d-%H-%M-%S")
             data1["timestamp"] = safe_ts
-
-            # Add extra info
             data1.update({"location": "Janonhanta1,Vantaa,Finland"})
 
             # Send to IoT Hub
@@ -413,8 +412,7 @@ def sensor_api_connection():
         except Exception as e:
             logger.error(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ❌ Error: {e}")
 
-        # Sleep at end of loop (applies to success and failure)
-        time.sleep(300)  # every 5 minutes
+        time.sleep(300)
 
 # =========================
 # Start ingestion in background thread

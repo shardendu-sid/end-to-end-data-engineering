@@ -15,9 +15,15 @@ def gloabal_financial_market_data():
             }
     response = requests.get(url, params=params)
     data = response.json()
+    data.pop('pagination', None)
+
+    dict_data = []
     for i in data.items():
-        for y in i:
-            print(y)
-    
-   
+        for row in i[1]:
+            dict_data.append(row)
+        
+        print(dict_data)
+       
+            
+            # print(value)
 gloabal_financial_market_data()
